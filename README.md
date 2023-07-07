@@ -47,12 +47,13 @@ with the step bit changing between commands.
 Two implementations are provided - one using the
 internal clock and cycle counting, one synched to
 an external clock source via `wait irq`.
-Both are designed for a nominal 3.125 MHz
-step clock but count at 6.25 MHz - the same delay
-count twice and producing a 50% duty cycle.
+Both are designed for a nominal
+(3.125 MHz step clock)[https://github.com/nludban/rpi-pico-psst]
+but count at 6.25 MHz - the same delay count twice
+and producing a 50% duty cycle.
 
-The internal clock provided to the SM must be 8x
-the step clock.
+The internal clock variation requires the SM to
+be clocked at 8x the step clock.
 Up to four SMs in the same PIO can be used, but
 there will be no synchronization between picos.
 
