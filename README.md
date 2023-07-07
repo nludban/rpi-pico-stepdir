@@ -21,10 +21,12 @@ unstable.
 
 Each command is a 32 bit word written to the TxFIFO:
 
+```
 31:30 second half step+dir
 29:28 first half step+dir
-27:8 delay count
-7:0 repeat count
+27: 8 delay count
+ 7: 0 repeat count
+```
 
 Note that step+dir order is application defined -
 the value in the lower numbered bit will be output
@@ -48,7 +50,7 @@ Two implementations are provided - one using the
 internal clock and cycle counting, one synched to
 an external clock source via `wait irq`.
 Both are designed for a nominal
-(3.125 MHz step clock)[https://github.com/nludban/rpi-pico-psst]
+[3.125 MHz step clock](https://github.com/nludban/rpi-pico-psst)
 but count at 6.25 MHz - the same delay count twice
 and producing a 50% duty cycle.
 
