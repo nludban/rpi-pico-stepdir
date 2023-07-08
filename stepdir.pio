@@ -1,0 +1,193 @@
+/*********************************************************************/
+/*
+ * stepdir.pio
+ *
+ *	PIO drives step and directions pins.
+ *
+ * https://github.com/nludban/rpi-pico-stepdir
+ */
+/*********************************************************************/
+
+// PSST defaults to IRQs 5 and 7, so use 4.
+.define STEP_IRQ	4
+
+//--------------------------------------------------
+.program stepdir_int_clock
+;; out pins: 2 bits of step and direction
+;;
+;; command word, most to least significant bits:
+;;  2 bits "hi" step and direction for second half
+;;  2 bits "lo" step and direction for first half
+;; 20 bits delay (biased -2)
+;;  8 bits repeat (biased -1)
+;;
+;; Output is typically set for a rising edge in the center of
+;; the interval.  Duration is (delay + 2) at 1/8 the SM's input
+;; clock - eg, 3.125 MHz from 25 MHz clock.
+
+again:
+	nop	[2]		; balances start block
+
+.wrap_target
+	;; Low phase
+	mov	osr, isr
+	out	x, 18 [1]	; x = delay
+	out	pins, 2		; lo bits
+
+L0:	jmp	x--, L0 [3]
+
+	;; High phase
+	mov	osr, isr [4]	; (delay balances repeat/reload)
+	out	x, 20		; x = delay
+	out	null, 2
+	out	pins, 2		; hi bits
+
+L1:	jmp	x--, L1 [3]
+
+	;; Repeat or reload
+	jmp	y--, again
+start:
+	pull	block
+	out	y, 8		; repeat count
+	mov	isr, osr	; save (delay, lo bits, hi bits)
+.wrap
+
+//--------------------------------------------------
+.program stepdir_clock_to_irq
+;; clock	input: from external source
+;; IRQ		interrupt: to stepdir_ext_clock
+;;
+;; Generate an interrupt to other SMs on each rising and falling
+;; edge of the external clock (ie, 6.25 MHz from 3.125 MHz clock).
+;;
+;; Replace with ??? routing GPIO both edge interrupts to the PIO?
+;; Option to route (second?) interrupt to second PIO?
+.wrap_target
+start:
+	;; jmp pin nENABLE start
+	wait	1 pin 0
+	irq	set STEP_IRQ
+	wait	0 pin 0
+	irq	set STEP_IRQ
+.wrap
+
+//--------------------------------------------------
+.program stepdir_ext_clock
+;; out pins: 2 bits of step and direction
+;;
+;; command word, most to least significant bits:
+;;  2 bits "hi" step and direction for second half
+;;  2 bits "lo" step and direction for first half
+;; 20 bits delay (biased -2)
+;;  8 bits repeat (biased -1)
+.wrap_target
+start:
+	pull	block
+	out	y, 8		; repeat count
+	mov	isr, osr	; save command, excluding repeat count
+again:
+	;; -- Low phase --
+	mov	osr, isr
+	out	x, 20		; x = delay
+
+	wait	1 irq STEP_IRQ
+	out	pins, 2		; lo bits
+
+L0:	wait	1 irq STEP_IRQ
+	jmp	x--, L0
+
+	;; -- High phase --
+	mov	osr, isr
+	out	x, 20		; x = delay
+	out	null, 2
+	wait	1 irq STEP_IRQ
+	out	pins, 2		; hi bits
+
+L1:	wait	1 irq STEP_IRQ
+	jmp	x--, L1
+
+	;; Repeat or reload
+	jmp	y--, again
+.wrap
+
+/*********************************************************************/
+% c-sdk {
+
+#include "hardware/gpio.h"
+
+static inline
+void
+stepdir_clock_to_irq_program_init(
+   PIO			pio,
+   int			sm,
+   int			offset,
+   int			clock_pin
+   )
+{
+   pio_sm_config c = stepdir_clock_to_irq_program_get_default_config(
+      offset);
+
+   sm_config_set_in_pins(&c, clock_pin);
+   // out pins: n/a
+   // set pins: n/a
+   // side-set pins: n/a
+   // jmp pin: n/a
+
+   pio_sm_init(pio, sm, offset, &c);
+
+# if 0
+   // Clock input is likely an output from something else, let the
+   // user application configure it.
+   //pio_gpio_init(pio, clock_pin);
+   // XXX Seems to conflicts with setting as output in other SM...
+   pio_sm_set_consecutive_pindirs(
+      pio, sm,
+      clock_pin,	// base
+      1,		// count
+      false);		// is_output?
+# endif
+
+   pio_sm_set_enabled(pio, sm, /*enable=*/true);
+   return;
+}
+
+static inline
+void
+stepdir_ext_clock_program_init(
+   PIO			pio,
+   int			sm,
+   int			offset,
+   int			base_pins
+   )
+{
+   pio_sm_config c = stepdir_ext_clock_program_get_default_config(
+      offset);
+   sm_config_set_out_shift(&c,
+			   true,	// shift_right? => lsb first
+			   false,	// autopull?
+			   32);
+   sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+
+   // in pins: n/a
+   sm_config_set_out_pins(&c, base_pins, 2);
+   // set pins: n/a
+   // side-set pins: n/a
+   // jmp pin: n/a
+
+   pio_sm_init(pio, sm, offset, &c);
+
+   pio_gpio_init(pio, base_pins + 0);
+   pio_gpio_init(pio, base_pins + 1);
+   pio_sm_set_consecutive_pindirs(
+      pio, sm,
+      base_pins,	// base
+      2,		// count
+      true);		// is_output?
+
+   // XXX synchronized start when multiples
+   pio_sm_set_enabled(pio, sm, /*enable=*/true);
+   return;
+}
+
+%}
+/**/
